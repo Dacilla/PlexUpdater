@@ -26,8 +26,9 @@ Installation complete.
 
 Next steps:
   1. Review /etc/plex-beta-updater.env
-  2. Enable timers:
+  2. Optional: save your Discord webhook to /etc/plex-beta-updater.discord-webhook
+  3. Enable timers:
      sudo systemctl enable --now plex-beta-updater.timer plex-beta-updater-retry.timer
-  3. Dry-run the updater:
+  4. Dry-run the updater:
      sudo /usr/local/libexec/plex-beta-updater dry-run
 EOF

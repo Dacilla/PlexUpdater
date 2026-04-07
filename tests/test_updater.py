@@ -9,7 +9,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plex_beta_updater import ActivityInfo, Config, PlexBetaUpdater, UpdateInfo, parse_env_file
+from plex_beta_updater import (
+    ActivityInfo,
+    Config,
+    PlexBetaUpdater,
+    UpdateInfo,
+    UpdaterError,
+    parse_env_file,
+)
 
 
 class FakeUpdater(PlexBetaUpdater):
@@ -27,6 +34,7 @@ class FakeUpdater(PlexBetaUpdater):
         self._activity = activity
         self._fail_install = fail_install
         self.install_calls = 0
+        self.discord_messages: list[str] = []
 
     def get_installed_version(self) -> str:
         return self._installed_version
@@ -48,6 +56,9 @@ class FakeUpdater(PlexBetaUpdater):
 
     def ensure_service_running(self) -> None:
         return None
+
+    def send_discord_notification(self, message: str) -> None:
+        self.discord_messages.append(message)
 
 
 class UpdaterTests(unittest.TestCase):
@@ -121,6 +132,7 @@ class UpdaterTests(unittest.TestCase):
             payload = json.loads(retry_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["active_count"], 1)
             self.assertEqual(payload["target_version"], "1.43.1.10576-b446a0e28")
+            self.assertEqual(updater.discord_messages, [])
 
     def test_install_failure_clears_pending_retry(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -141,9 +153,44 @@ class UpdaterTests(unittest.TestCase):
                 fail_install=True,
             )
 
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(UpdaterError):
                 updater.run(mode="run-retry")
             self.assertFalse(retry_path.exists())
+            self.assertEqual(len(updater.discord_messages), 2)
+            self.assertIn("Plex update starting", updater.discord_messages[0])
+            self.assertIn("Plex update failed", updater.discord_messages[1])
+
+    def test_successful_install_sends_start_and_finish_notifications(self) -> None:
+        config = Config(discord_webhook_url="https://example.invalid/webhook")
+        updater = FakeUpdater(
+            config=config,
+            installed_version="1.43.0.10492-121068a07",
+            update=UpdateInfo(
+                available=True,
+                current_version="1.43.0.10492-121068a07",
+                target_version="1.43.1.10576-b446a0e28",
+                download_url="https://example.invalid/plex.deb",
+                source="remote",
+            ),
+            activity=ActivityInfo(active_count=0, source="db", sessions=[]),
+        )
+
+        result = updater.run(mode="run-daily")
+
+        self.assertEqual(result.action, "installed")
+        self.assertEqual(len(updater.discord_messages), 2)
+        self.assertIn("Plex update starting", updater.discord_messages[0])
+        self.assertIn("1.43.0.10492-121068a07 -> 1.43.1.10576-b446a0e28", updater.discord_messages[0])
+        self.assertIn("Plex update finished", updater.discord_messages[1])
+
+    def test_discord_webhook_url_reads_secret_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            webhook_path = Path(tmpdir) / "discord-webhook"
+            webhook_path.write_text("https://example.invalid/webhook\n", encoding="utf-8")
+
+            updater = PlexBetaUpdater(Config(discord_webhook_file=str(webhook_path)))
+
+            self.assertEqual(updater.discord_webhook_url(), "https://example.invalid/webhook")
 
 
 if __name__ == "__main__":

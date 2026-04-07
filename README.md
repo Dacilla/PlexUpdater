@@ -13,6 +13,7 @@ It checks for a newer beta release every day at `03:30`, asks Tautulli whether a
 - Falls back to live Plex session state, then to Tautulli's SQLite `sessions` table if the API key is missing or invalid
 - Downloads and installs the matching `.deb`
 - Starts `plexmediaserver.service` after install and verifies the version
+- Optionally sends Discord webhook notifications when an update starts, finishes, or fails
 - Uses systemd timers plus `flock` so overlapping runs do not fight each other
 
 ## Requirements
@@ -49,13 +50,20 @@ sudo ./scripts/install.sh
 sudo nano /etc/plex-beta-updater.env
 ```
 
-4. Dry-run the updater:
+4. If you want Discord notifications, store the webhook outside git in a root-only file:
+
+```bash
+printf '%s\n' 'https://discord.com/api/webhooks/...' | sudo tee /etc/plex-beta-updater.discord-webhook >/dev/null
+sudo chmod 600 /etc/plex-beta-updater.discord-webhook
+```
+
+5. Dry-run the updater:
 
 ```bash
 sudo /usr/local/libexec/plex-beta-updater dry-run
 ```
 
-5. Enable the timers:
+6. Enable the timers:
 
 ```bash
 sudo systemctl enable --now plex-beta-updater.timer plex-beta-updater-retry.timer
@@ -78,6 +86,15 @@ STATE_DIR=/var/lib/plex-beta-updater
 RETRY_STATE_FILE=/var/lib/plex-beta-updater/retry-pending.json
 ```
 
+Discord notifications are optional. By default, the updater looks for a webhook URL in `/etc/plex-beta-updater.discord-webhook`, which keeps the secret out of the repository and out of the tracked example config.
+
+If you prefer, you can point at a different secret file or set the URL directly in the root-only env file:
+
+```dotenv
+DISCORD_WEBHOOK_FILE=/etc/plex-beta-updater.discord-webhook
+# DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
 Advanced Plex updater overrides are available if your host needs them:
 
 ```dotenv
@@ -89,6 +106,8 @@ REQUEST_TIMEOUT=30
 ```
 
 `TAUTULLI_API_KEY` is optional. If it is blank or invalid, the updater checks Plex's live session endpoint and only then falls back to the local Tautulli SQLite database. The SQLite fallback ignores rows that already have a `stopped` timestamp so stale paused entries do not block updates forever.
+
+When Discord notifications are enabled, the updater posts when the install begins, when it completes successfully, and if the install fails after it has started.
 
 ## Systemd Units
 
@@ -153,6 +172,7 @@ Useful checks:
 - If Tautulli API auth fails, verify the configured API key or leave it blank and let the Plex-session and SQLite fallbacks handle activity checks.
 - If downloads fail with `403`, verify the Plex server is claimed and `PlexOnlineToken` is present in the preferences file.
 - If hourly retries never happen, check whether `/var/lib/plex-beta-updater/retry-pending.json` exists.
+- If Discord notifications do not arrive, verify that `/etc/plex-beta-updater.discord-webhook` exists, is readable by root, and contains only the webhook URL.
 
 ## Upgrade And Removal
 

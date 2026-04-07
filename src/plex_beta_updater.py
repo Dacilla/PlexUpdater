@@ -46,6 +46,8 @@ class Config:
     package_name: str = "plexmediaserver"
     service_name: str = "plexmediaserver.service"
     request_timeout: int = 30
+    discord_webhook_url: str = ""
+    discord_webhook_file: str = "/etc/plex-beta-updater.discord-webhook"
     plex_updater_product: str = "5"
     plex_updater_build: str = "linux-x86_64"
     plex_updater_channel: str = "16"
@@ -84,6 +86,8 @@ ENV_MAP = {
     "PLEX_PACKAGE_NAME": "package_name",
     "PLEX_SERVICE_NAME": "service_name",
     "REQUEST_TIMEOUT": "request_timeout",
+    "DISCORD_WEBHOOK_URL": "discord_webhook_url",
+    "DISCORD_WEBHOOK_FILE": "discord_webhook_file",
     "PLEX_UPDATER_PRODUCT": "plex_updater_product",
     "PLEX_UPDATER_BUILD": "plex_updater_build",
     "PLEX_UPDATER_CHANNEL": "plex_updater_channel",
@@ -203,10 +207,16 @@ class PlexBetaUpdater:
                     retry_pending=retry_pending,
                 )
 
-            self.install_update(update)
-            self.ensure_service_running()
+            self.notify_discord_update_started(mode, installed_version, update)
+            try:
+                self.install_update(update)
+                self.ensure_service_running()
+            except Exception as exc:
+                self.notify_discord_update_failed(mode, installed_version, update, exc)
+                raise
             self.clear_retry_state()
             new_version = self.get_installed_version()
+            self.notify_discord_update_finished(mode, installed_version, new_version, update)
             return RunResult(
                 action="installed",
                 message=f"Installed Plex {new_version}.",
@@ -520,6 +530,98 @@ class PlexBetaUpdater:
     def ensure_service_running(self) -> None:
         self.run_command(["systemctl", "start", self.config.service_name])
         self.run_command(["systemctl", "is-active", "--quiet", self.config.service_name])
+
+    def discord_webhook_url(self) -> str:
+        if self.config.discord_webhook_url.strip():
+            return self.config.discord_webhook_url.strip()
+
+        webhook_file = self.config.discord_webhook_file.strip()
+        if not webhook_file:
+            return ""
+
+        path = Path(webhook_file)
+        if not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            self.logger.warning("Could not read Discord webhook file %s: %s", path, exc)
+            return ""
+
+    def notify_discord_update_started(
+        self, mode: str, installed_version: str, update: UpdateInfo
+    ) -> None:
+        self.send_discord_notification(
+            self.format_discord_message(
+                "Plex update starting",
+                mode,
+                f"{installed_version} -> {update.target_version}",
+            )
+        )
+
+    def notify_discord_update_finished(
+        self, mode: str, installed_version: str, new_version: str, update: UpdateInfo
+    ) -> None:
+        self.send_discord_notification(
+            self.format_discord_message(
+                "Plex update finished",
+                mode,
+                f"{installed_version} -> {new_version}",
+                extra=f"Source: {update.source or 'unknown'}",
+            )
+        )
+
+    def notify_discord_update_failed(
+        self, mode: str, installed_version: str, update: UpdateInfo, exc: Exception
+    ) -> None:
+        self.send_discord_notification(
+            self.format_discord_message(
+                "Plex update failed",
+                mode,
+                f"{installed_version} -> {update.target_version}",
+                extra=str(exc),
+            )
+        )
+
+    def format_discord_message(
+        self, title: str, mode: str, versions: str, extra: str = ""
+    ) -> str:
+        mode_label = "retry run" if mode == "run-retry" else "daily run"
+        parts = [
+            title,
+            f"Host: {self.config.plex_device_name}",
+            f"Trigger: {mode_label}",
+            f"Versions: {versions}",
+        ]
+        if extra:
+            parts.append(f"Details: {extra}")
+        message = "\n".join(parts)
+        return message[:2000]
+
+    def send_discord_notification(self, message: str) -> None:
+        webhook_url = self.discord_webhook_url()
+        if not webhook_url:
+            return
+
+        payload = json.dumps(
+            {
+                "username": self.config.plex_product_name,
+                "content": message,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            webhook_url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.request_timeout):
+                return
+        except urllib.error.HTTPError as exc:
+            self.logger.warning("Discord webhook returned HTTP %s.", exc.code)
+        except urllib.error.URLError as exc:
+            self.logger.warning("Discord webhook request failed: %s", exc.reason)
 
     def detect_architecture(self) -> str:
         result = self.run_command(["dpkg", "--print-architecture"])
