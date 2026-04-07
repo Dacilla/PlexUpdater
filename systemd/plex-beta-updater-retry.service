@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry Plex beta update when the server becomes idle
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/plex-beta-updater/retry-pending.json
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/plex-beta-updater.env
+ExecStart=/usr/bin/flock -n /run/lock/plex-beta-updater.lock /usr/local/libexec/plex-beta-updater run-retry
+

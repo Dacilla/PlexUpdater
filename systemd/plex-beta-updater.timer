@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Plex beta updater at 03:30 every day
+
+[Timer]
+OnCalendar=03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

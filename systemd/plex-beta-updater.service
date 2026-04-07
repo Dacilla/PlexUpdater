@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Plex beta update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/plex-beta-updater.env
+ExecStart=/usr/bin/flock -n /run/lock/plex-beta-updater.lock /usr/local/libexec/plex-beta-updater run-daily
+

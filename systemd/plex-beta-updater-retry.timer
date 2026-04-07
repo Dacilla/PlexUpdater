@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry Plex beta updater hourly while a retry is pending
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
