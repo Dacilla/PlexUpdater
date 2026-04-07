@@ -175,4 +175,3 @@ sudo systemctl daemon-reload
 ## Notes
 
 - The updater treats paused sessions as busy by design.
-- Documentation and filenames are designed to be GitHub-ready and match the shipped code.
