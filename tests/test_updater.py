@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -59,6 +61,46 @@ class FakeUpdater(PlexBetaUpdater):
 
     def send_discord_notification(self, message: str) -> None:
         self.discord_messages.append(message)
+
+
+class RemoteFeedUpdater(PlexBetaUpdater):
+    def __init__(self, config: Config, xml_root: ET.Element) -> None:
+        super().__init__(config)
+        self.xml_root = xml_root
+
+    def request_xml(self, url: str, method: str, allow_status: set[int] | None = None) -> ET.Element:
+        return self.xml_root
+
+    def build_download_url(self, version: str, token: str) -> str:
+        return f"https://downloads.example.invalid/{version}/plexmediaserver_{version}_amd64.deb"
+
+
+class InstallUpdateTester(PlexBetaUpdater):
+    def __init__(
+        self,
+        config: Config,
+        installed_version: str,
+        package_versions: list[str],
+    ) -> None:
+        super().__init__(config)
+        self._installed_version = installed_version
+        self.package_versions = package_versions
+        self.download_calls: list[tuple[str, Path]] = []
+        self.commands: list[list[str]] = []
+
+    def download_file(self, url: str, destination: Path) -> None:
+        self.download_calls.append((url, destination))
+        destination.write_text("downloaded", encoding="utf-8")
+
+    def read_package_version(self, package_path: Path) -> str:
+        return self.package_versions.pop(0)
+
+    def run_command(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def get_installed_version(self) -> str:
+        return self._installed_version
 
 
 class UpdaterTests(unittest.TestCase):
@@ -191,6 +233,51 @@ class UpdaterTests(unittest.TestCase):
             updater = PlexBetaUpdater(Config(discord_webhook_file=str(webhook_path)))
 
             self.assertEqual(updater.discord_webhook_url(), "https://example.invalid/webhook")
+
+    def test_remote_updater_replaces_generic_download_url_with_direct_deb(self) -> None:
+        xml_root = ET.fromstring(
+            """
+            <MediaContainer>
+              <Release version="1.43.1.10576-06378bdcd" downloadURL="https://plex.tv/api/downloads/5?channel=beta" />
+            </MediaContainer>
+            """
+        )
+        updater = RemoteFeedUpdater(Config(), xml_root)
+
+        update = updater.check_remote_updater("1.43.0.10492-121068a07", "token")
+
+        self.assertTrue(update.available)
+        self.assertEqual(
+            update.download_url,
+            "https://downloads.example.invalid/1.43.1.10576-06378bdcd/plexmediaserver_1.43.1.10576-06378bdcd_amd64.deb",
+        )
+
+    def test_install_update_redownloads_cached_package_when_version_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir)
+            package_path = cache_dir / "plexmediaserver_1.43.1.10576-06378bdcd_amd64.deb"
+            package_path.write_text("stale", encoding="utf-8")
+
+            updater = InstallUpdateTester(
+                config=Config(download_cache_dir=str(cache_dir)),
+                installed_version="1.43.1.10576-06378bdcd",
+                package_versions=[
+                    "1.43.0.10492-121068a07",
+                    "1.43.1.10576-06378bdcd",
+                ],
+            )
+            update = UpdateInfo(
+                available=True,
+                current_version="1.43.0.10492-121068a07",
+                target_version="1.43.1.10576-06378bdcd",
+                download_url="https://downloads.example.invalid/1.43.1.10576-06378bdcd/plexmediaserver_1.43.1.10576-06378bdcd_amd64.deb",
+                source="remote",
+            )
+
+            updater.install_update(update)
+
+            self.assertEqual(len(updater.download_calls), 1)
+            self.assertEqual(updater.commands, [["dpkg", "-i", str(package_path)]])
 
 
 if __name__ == "__main__":

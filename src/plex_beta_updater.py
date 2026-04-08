@@ -296,8 +296,7 @@ class PlexBetaUpdater:
             )
 
         if local_update.available:
-            if not local_update.download_url:
-                local_update.download_url = self.build_download_url(local_update.target_version, token)
+            local_update.download_url = self.resolve_download_url(local_update, token)
             return local_update
         return self.check_remote_updater(installed_version, token)
 
@@ -334,8 +333,7 @@ class PlexBetaUpdater:
         xml_root = self.request_xml(url, method="GET")
         update = self.parse_update_xml(xml_root, installed_version, source="remote")
         if update.available:
-            if not update.download_url:
-                update.download_url = self.build_download_url(update.target_version, token)
+            update.download_url = self.resolve_download_url(update, token)
             return update
         return UpdateInfo(available=False, current_version=installed_version, source="remote")
 
@@ -355,9 +353,6 @@ class PlexBetaUpdater:
         if not download_url:
             download_url = xml_root.attrib.get("downloadURL", "").strip()
 
-        if download_url:
-            download_url = self.ensure_token_query(download_url)
-
         return UpdateInfo(
             available=True,
             current_version=installed_version,
@@ -375,6 +370,16 @@ class PlexBetaUpdater:
             f"{version}/{self.config.plex_updater_distribution}/"
             f"plexmediaserver_{version}_{arch}.deb?{query}"
         )
+
+    def resolve_download_url(self, update: UpdateInfo, token: str) -> str:
+        if not update.download_url:
+            return self.build_download_url(update.target_version, token)
+
+        parsed = urllib.parse.urlparse(update.download_url)
+        filename = Path(parsed.path).name
+        if not filename.endswith(".deb"):
+            return self.build_download_url(update.target_version, token)
+        return self.ensure_token_query(update.download_url)
 
     def get_activity(self, plex_token: str | None = None) -> ActivityInfo:
         if self.config.tautulli_api_key:
@@ -500,8 +505,25 @@ class PlexBetaUpdater:
         cache_dir = Path(self.config.download_cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
         package_path = cache_dir / Path(urllib.parse.urlparse(update.download_url).path).name
+        if package_path.exists():
+            cached_version = self.read_package_version(package_path)
+            if cached_version != update.target_version:
+                self.logger.warning(
+                    "Cached package version %s does not match target %s; re-downloading.",
+                    cached_version,
+                    update.target_version,
+                )
+                package_path.unlink()
+
         if not package_path.exists():
             self.download_file(update.download_url, package_path)
+
+        downloaded_version = self.read_package_version(package_path)
+        if downloaded_version != update.target_version:
+            raise UpdaterError(
+                f"Downloaded package version mismatch: expected {update.target_version}, "
+                f"got {downloaded_version}."
+            )
 
         self.run_command(["dpkg", "-i", str(package_path)])
         installed_version = self.get_installed_version()
@@ -693,6 +715,10 @@ class PlexBetaUpdater:
             stderr = result.stderr.strip() or result.stdout.strip()
             raise UpdaterError(f"Command failed ({' '.join(command)}): {stderr}")
         return result
+
+    def read_package_version(self, package_path: Path) -> str:
+        result = self.run_command(["dpkg-deb", "-f", str(package_path), "Version"])
+        return result.stdout.strip()
 
     def normalize_session(self, session: dict[str, Any]) -> dict[str, Any]:
         return {
