@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import http.server
 import sqlite3
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -233,6 +236,42 @@ class UpdaterTests(unittest.TestCase):
             updater = PlexBetaUpdater(Config(discord_webhook_file=str(webhook_path)))
 
             self.assertEqual(updater.discord_webhook_url(), "https://example.invalid/webhook")
+
+    def test_discord_notification_uses_custom_headers(self) -> None:
+        captured: dict[str, str] = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                captured["content_type"] = self.headers.get("Content-Type", "")
+                captured["accept"] = self.headers.get("Accept", "")
+                captured["user_agent"] = self.headers.get("User-Agent", "")
+                captured["body"] = self.rfile.read(length).decode("utf-8")
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        with socketserver.TCPServer(("127.0.0.1", 0), Handler) as server:
+            port = server.server_address[1]
+            thread = threading.Thread(target=server.handle_request)
+            thread.start()
+
+            updater = PlexBetaUpdater(
+                Config(discord_webhook_url=f"http://127.0.0.1:{port}/webhook")
+            )
+            updater.send_discord_notification("header probe")
+
+            thread.join(timeout=5)
+
+        self.assertEqual(captured["content_type"], "application/json")
+        self.assertEqual(captured["accept"], "application/json")
+        self.assertEqual(captured["user_agent"], "Plex Beta Updater/0.1.0")
+        self.assertEqual(
+            json.loads(captured["body"]),
+            {"username": "Plex Beta Updater", "content": "header probe"},
+        )
 
     def test_remote_updater_replaces_generic_download_url_with_direct_deb(self) -> None:
         xml_root = ET.fromstring(

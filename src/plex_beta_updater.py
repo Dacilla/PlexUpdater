@@ -635,13 +635,23 @@ class PlexBetaUpdater:
             webhook_url,
             data=payload,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": f"{self.config.plex_product_name}/{APP_VERSION}",
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=self.config.request_timeout):
                 return
         except urllib.error.HTTPError as exc:
-            self.logger.warning("Discord webhook returned HTTP %s.", exc.code)
+            response_body = exc.read().decode("utf-8", errors="replace").strip()
+            if response_body:
+                self.logger.warning(
+                    "Discord webhook returned HTTP %s: %s", exc.code, response_body
+                )
+            else:
+                self.logger.warning("Discord webhook returned HTTP %s.", exc.code)
         except urllib.error.URLError as exc:
             self.logger.warning("Discord webhook request failed: %s", exc.reason)
 
