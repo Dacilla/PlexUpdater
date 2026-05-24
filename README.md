@@ -50,12 +50,16 @@ sudo ./scripts/install.sh
 sudo nano /etc/plex-beta-updater.env
 ```
 
-4. If you want Discord notifications, store the webhook outside git in a root-only file:
+4. If you want update notifications, point at the lexylou-status notify hook on peanut (DM via bot):
 
 ```bash
-printf '%s\n' 'https://discord.com/api/webhooks/...' | sudo tee /etc/plex-beta-updater.discord-webhook >/dev/null
-sudo chmod 600 /etc/plex-beta-updater.discord-webhook
+printf '%s\n' 'YOUR_NOTIFY_API_KEY' | sudo tee /etc/plex-beta-updater.notify-key >/dev/null
+sudo chmod 600 /etc/plex-beta-updater.notify-key
+# In /etc/plex-beta-updater.env:
+# NOTIFY_URL=http://10.81.12.68:8787/notify
 ```
+
+Legacy Discord webhooks post to a channel only; use `DISCORD_WEBHOOK_FILE` if you still need that path.
 
 5. Dry-run the updater:
 
@@ -86,13 +90,12 @@ STATE_DIR=/var/lib/plex-beta-updater
 RETRY_STATE_FILE=/var/lib/plex-beta-updater/retry-pending.json
 ```
 
-Discord notifications are optional. By default, the updater looks for a webhook URL in `/etc/plex-beta-updater.discord-webhook`, which keeps the secret out of the repository and out of the tracked example config.
-
-If you prefer, you can point at a different secret file or set the URL directly in the root-only env file:
+Notifications are optional. The recommended path is `NOTIFY_URL` plus an API key in `/etc/plex-beta-updater.notify-key`, which forwards through lexylou-status and DMs the alert user. Webhook URLs in `/etc/plex-beta-updater.discord-webhook` are still supported but post to a channel, not a DM.
 
 ```dotenv
-DISCORD_WEBHOOK_FILE=/etc/plex-beta-updater.discord-webhook
-# DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+NOTIFY_URL=http://10.81.12.68:8787/notify
+NOTIFY_API_KEY_FILE=/etc/plex-beta-updater.notify-key
+# DISCORD_WEBHOOK_FILE=/etc/plex-beta-updater.discord-webhook
 ```
 
 Advanced Plex updater overrides are available if your host needs them:

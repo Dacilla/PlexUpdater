@@ -26,7 +26,7 @@ Installation complete.
 
 Next steps:
   1. Review /etc/plex-beta-updater.env
-  2. Optional: save your Discord webhook to /etc/plex-beta-updater.discord-webhook
+  2. Optional: configure NOTIFY_URL + /etc/plex-beta-updater.notify-key for DM alerts via lexylou-status
   3. Enable timers:
      sudo systemctl enable --now plex-beta-updater.timer plex-beta-updater-retry.timer
   4. Dry-run the updater:

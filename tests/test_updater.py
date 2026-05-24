@@ -205,6 +205,46 @@ class UpdaterTests(unittest.TestCase):
             self.assertIn("Plex update starting", updater.discord_messages[0])
             self.assertIn("Plex update failed", updater.discord_messages[1])
 
+    def test_notify_request_posts_json_payload(self) -> None:
+        captured: dict[str, str] = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                captured["notify_key"] = self.headers.get("X-Notify-Key", "")
+                captured["body"] = self.rfile.read(length).decode("utf-8")
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        with socketserver.TCPServer(("127.0.0.1", 0), Handler) as server:
+            port = server.server_address[1]
+            thread = threading.Thread(target=server.handle_request)
+            thread.start()
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                key_path = Path(tmpdir) / "notify-key"
+                key_path.write_text("secret-key\n", encoding="utf-8")
+                updater = PlexBetaUpdater(
+                    Config(
+                        notify_url=f"http://127.0.0.1:{port}/notify",
+                        notify_api_key_file=str(key_path),
+                    )
+                )
+                updater.send_discord_notification(
+                    "Plex update starting\nHost: wheatley\nTrigger: daily run"
+                )
+
+            thread.join(timeout=5)
+
+        self.assertEqual(captured["notify_key"], "secret-key")
+        payload = json.loads(captured["body"])
+        self.assertEqual(payload["title"], "Plex update starting")
+        self.assertIn("Host: wheatley", payload["body"])
+        self.assertEqual(payload["level"], "info")
+
     def test_successful_install_sends_start_and_finish_notifications(self) -> None:
         config = Config(discord_webhook_url="https://example.invalid/webhook")
         updater = FakeUpdater(

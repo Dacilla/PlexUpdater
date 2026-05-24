@@ -48,6 +48,9 @@ class Config:
     request_timeout: int = 30
     discord_webhook_url: str = ""
     discord_webhook_file: str = "/etc/plex-beta-updater.discord-webhook"
+    notify_url: str = ""
+    notify_api_key: str = ""
+    notify_api_key_file: str = "/etc/plex-beta-updater.notify-key"
     plex_updater_product: str = "5"
     plex_updater_build: str = "linux-x86_64"
     plex_updater_channel: str = "16"
@@ -88,6 +91,9 @@ ENV_MAP = {
     "REQUEST_TIMEOUT": "request_timeout",
     "DISCORD_WEBHOOK_URL": "discord_webhook_url",
     "DISCORD_WEBHOOK_FILE": "discord_webhook_file",
+    "NOTIFY_URL": "notify_url",
+    "NOTIFY_API_KEY": "notify_api_key",
+    "NOTIFY_API_KEY_FILE": "notify_api_key_file",
     "PLEX_UPDATER_PRODUCT": "plex_updater_product",
     "PLEX_UPDATER_BUILD": "plex_updater_build",
     "PLEX_UPDATER_CHANNEL": "plex_updater_channel",
@@ -620,7 +626,33 @@ class PlexBetaUpdater:
         message = "\n".join(parts)
         return message[:2000]
 
+    def notify_api_key(self) -> str:
+        if self.config.notify_api_key.strip():
+            return self.config.notify_api_key.strip()
+
+        key_file = self.config.notify_api_key_file.strip()
+        if not key_file:
+            return ""
+
+        path = Path(key_file)
+        if not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            self.logger.warning("Could not read notify API key file %s: %s", path, exc)
+            return ""
+
     def send_discord_notification(self, message: str) -> None:
+        lines = message.split("\n", 1)
+        title = lines[0].strip()
+        body = lines[1].strip() if len(lines) > 1 else ""
+        level = "error" if "failed" in title.lower() else "info"
+
+        if self.config.notify_url.strip():
+            self.send_notify_request(title, body, level)
+            return
+
         webhook_url = self.discord_webhook_url()
         if not webhook_url:
             return
@@ -654,6 +686,47 @@ class PlexBetaUpdater:
                 self.logger.warning("Discord webhook returned HTTP %s.", exc.code)
         except urllib.error.URLError as exc:
             self.logger.warning("Discord webhook request failed: %s", exc.reason)
+
+    def send_notify_request(self, title: str, body: str, level: str) -> None:
+        notify_url = self.config.notify_url.strip()
+        api_key = self.notify_api_key()
+        if not notify_url or not api_key:
+            self.logger.warning(
+                "Notify URL is set but no API key is configured; skipping notification"
+            )
+            return
+
+        payload = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "level": level,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            notify_url,
+            data=payload,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Notify-Key": api_key,
+                "User-Agent": f"{self.config.plex_product_name}/{APP_VERSION}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.request_timeout):
+                return
+        except urllib.error.HTTPError as exc:
+            response_body = exc.read().decode("utf-8", errors="replace").strip()
+            if response_body:
+                self.logger.warning(
+                    "Notify endpoint returned HTTP %s: %s", exc.code, response_body
+                )
+            else:
+                self.logger.warning("Notify endpoint returned HTTP %s.", exc.code)
+        except urllib.error.URLError as exc:
+            self.logger.warning("Notify endpoint request failed: %s", exc.reason)
 
     def detect_architecture(self) -> str:
         result = self.run_command(["dpkg", "--print-architecture"])
