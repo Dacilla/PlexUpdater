@@ -175,7 +175,8 @@ Useful checks:
 - If Tautulli API auth fails, verify the configured API key or leave it blank and let the Plex-session and SQLite fallbacks handle activity checks.
 - If downloads fail with `403`, verify the Plex server is claimed and `PlexOnlineToken` is present in the preferences file.
 - If hourly retries never happen, check whether `/var/lib/plex-beta-updater/retry-pending.json` exists.
-- If Discord notifications do not arrive, verify that `/etc/plex-beta-updater.discord-webhook` exists, is readable by root, and contains only the webhook URL.
+- If DM notifications do not arrive, verify `NOTIFY_URL` and `/etc/plex-beta-updater.notify-key` in `/etc/plex-beta-updater.env`, and that lexylou-status on peanut has `NOTIFY_API_KEY` set and is listening on the notify address.
+- Legacy webhook notifications require `/etc/plex-beta-updater.discord-webhook` readable by root with only the webhook URL inside.
 
 ## Upgrade And Removal
 

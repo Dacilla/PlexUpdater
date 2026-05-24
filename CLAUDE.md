@@ -6,7 +6,9 @@ This repository contains a root-run Python updater for Plex Media Server on Debi
 
 ## Deployment Target
 
-- Primary target: Ubuntu or Debian-family VMs
+- Primary host: **wheatley** (`alex@10.81.12.233`) — Plex, Tautulli, and the updater timers all run here
+- Git clone: `~/PlexUpdater` on wheatley; installed binary at `/usr/local/libexec/plex-beta-updater`
+- Primary target OS: Ubuntu or Debian-family VMs
 - Package manager: `dpkg`
 - Service manager: `systemd`
 - Plex installation type: official `.deb`
@@ -24,8 +26,17 @@ This repository contains a root-run Python updater for Plex Media Server on Debi
   6. If Tautulli API is unavailable, fall back to Plex live sessions, then to filtered Tautulli DB rows
   7. Defer by writing retry state, or download and install the new `.deb`
   8. Ensure `plexmediaserver.service` is running afterward
+  9. Optionally notify via lexylou-status (`NOTIFY_URL` + key file) or legacy Discord webhook
 - `systemd/` contains the scheduling layer.
 - `scripts/install.sh` copies the script, config template, and unit files into host paths.
+
+## Discord / Notify Path
+
+Preferred: POST to lexylou-status on peanut, which DMs the alert user via the Discord bot.
+
+- Config: `NOTIFY_URL` (e.g. `http://10.81.12.68:8787/notify`) and `NOTIFY_API_KEY_FILE` (`/etc/plex-beta-updater.notify-key`)
+- The updater sends `X-Notify-Key` header with JSON `{title, body, level}` on update start, finish, and failure
+- Legacy `DISCORD_WEBHOOK_FILE` still works but posts to a channel, not a DM — prefer the notify hook for new setups
 
 ## File Ownership And Expectations
 
